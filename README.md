@@ -12,37 +12,59 @@ Complete deployment package for running Open-Jev 2B inference on OpenShift with 
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │ Namespace: jev-model                                                 │    │
 │  │                                                                      │    │
-│  │  ┌─────────────────┐    ┌─────────────────┐    ┌────────────────┐  │    │
-│  │  │ Deployment      │    │ PVC             │    │ Service        │  │    │
-│  │  │ open-jev        │    │ jev-model-pvc   │    │ open-jev       │  │    │
-│  │  │ 1 replica       │    │ 50Gi (RWO)      │    │ ClusterIP:8791 │  │    │
-│  │  │ 1 GPU (NVIDIA)  │◄───│ /models/        │◄───│                │  │    │
-│  │  │ HPA: 1-3 pods   │    │ Qwen + OpenJev  │    │                │  │    │
-│  │  └────────┬────────┘    └─────────────────┘    └───────┬────────┘  │    │
-│  │           │                                            │           │    │
-│  │  ┌────────▼────────────────────────────────────────────▼──────┐   │    │
-│  │  │                  GATEWAY EXPOSURE LAYER                    │   │    │
-│  │  │  ┌─────────────────────────────────────────────────────┐  │   │    │
-│  │  │  │ Route: open-jev-gateway                             │  │   │    │
-│  │  │  │   Host: open-jev-team.apps.<CLUSTER_DOMAIN>         │  │   │    │
-│  │  │  │   TLS: Edge termination, HTTPS redirect             │  │   │    │
-│  │  │  │   Rate Limit: 100 req/s per client                  │  │   │    │
-│  │  │  │   Timeout: 120s for inference                       │  │   │    │
-│  │  │  └─────────────────────────────────────────────────────┘  │   │    │
-│  │  │  ┌─────────────────────────────────────────────────────┐  │   │    │
-│  │  │  │ NetworkPolicy: open-jev-team-access                 │  │   │    │
-│  │  │  │   Allow: monitoring, team namespaces (label-based)  │  │   │    │
-│  │  │  │   Deny:  all other namespaces by default            │  │   │    │
-│  │  │  └─────────────────────────────────────────────────────┘  │   │    │
-│  │  │  ┌─────────────────────────────────────────────────────┐  │   │    │
-│  │  │  │ HPA: open-jev-hpa                                   │  │   │    │
-│  │  │  │   Metrics: CPU 70%, Memory 80%                      │  │   │    │
-│  │  │  │   Scale: 1→3 replicas, GPU-aware                    │  │   │    │
-│  │  │  └─────────────────────────────────────────────────────┘  │   │    │
-│  │  │  ┌─────────────────────────────────────────────────────┐  │   │    │
-│  │  │  │ Monitoring: ServiceMonitor + Grafana Dashboard      │  │   │    │
-│  │  │  │   Metrics: latency, RPS, GPU util, memory, errors   │  │   │    │
-│  │  │  └─────────────────────────────────────────────────────┘  │   │    │
+│  │  ┌─────────────────────────┐ ┌─────────────────┐ ┌────────────────┐  │    │
+│  │  │ Deployment: open-jev    │ │ PVC             │ │ Service        │  │    │
+│  │  │ 1 replica, 1 GPU        │ │ jev-model-pvc   │ │ open-jev       │  │    │
+│  │  │ HPA: 1-3 pods           │ │ 50Gi (RWO)      │ │ ClusterIP:8080 │  │    │
+│  │  │ ┌─────────────────────┐ │ │ /models/        │ │ (auth-proxy)   │  │    │
+│  │  │ │ Auth Proxy (8080)   │ │ │ Qwen + OpenJev  │ │                │  │    │
+│  │  │ │   oauth2-proxy      │ │ │                 │ │                │  │    │
+│  │  │ │   Static token      │ │ │                 │ │                │  │    │
+│  │  │ │   IsfPassw0rd       │ │ │                 │ │                │  │    │
+│  │  │ └─────────┬───────────┘ │ │                 │ │                │  │    │
+│  │  │           │             │ │                 │ │                │  │    │
+│  │  │ ┌─────────▼───────────┐ │ │                 │ │                │  │    │
+│  │  │ │ Open-Jev (8791)     │ │ │                 │ │                │  │    │
+│  │  │ │ 127.0.0.1 only      │ │ │                 │ │                │  │    │
+│  │  │ │ Qwen3.5-2B + LoRA   │ │ │                 │ │                │  │    │
+│  │  │ └─────────────────────┘ │ │                 │ │                │  │    │
+│  │  └─────────────────────────┘ └─────────────────┘ └───────┬────────┘  │    │
+│  │                                                          │           │    │
+│  │  ┌───────────────────────────────────────────────────────▼──────┐   │    │
+│  │  │                    GATEWAY EXPOSURE LAYER                     │   │    │
+│  │  │  ┌─────────────────────────────────────────────────────┐    │   │    │
+│  │  │  │ Route: open-jev-gateway                             │    │   │    │
+│  │  │  │   Host: open-jev-team.apps.f80l034.fusion.tadn.ibm.com│   │   │    │
+│  │  │  │   TLS: Edge termination, HTTPS redirect             │    │   │    │
+│  │  │  │   Rate Limit: 100 req/s per client                  │    │   │    │
+│  │  │  │   Timeout: 120s for inference                       │    │   │    │
+│  │  │  │   Path: / (rewrites to /)                           │    │   │    │
+│  │  │  └─────────────────────────────────────────────────────┘    │   │    │
+│  │  │  ┌─────────────────────────────────────────────────────┐    │   │    │
+│  │  │  │ Route: open-jev-gateway-v1                          │    │   │    │
+│  │  │  │   Host: open-jev-team.apps.f80l034.fusion.tadn.ibm.com│   │   │    │
+│  │  │  │   Path: /v1/* (rewrites /v1/* → /*)                 │    │   │    │
+│  │  │  │   OpenAI-compatible endpoints                       │    │   │    │
+│  │  │  └─────────────────────────────────────────────────────┘    │   │    │
+│  │  │  ┌─────────────────────────────────────────────────────┐    │   │    │
+│  │  │  │ Auth: Static Bearer Token = IsfPassw0rd             │    │   │    │
+│  │  │  │   Header: Authorization: Bearer IsfPassw0rd         │    │   │    │
+│  │  │  │   Health endpoint: no auth required                 │    │   │    │
+│  │  │  └─────────────────────────────────────────────────────┘    │   │    │
+│  │  │  ┌─────────────────────────────────────────────────────┐    │   │    │
+│  │  │  │ NetworkPolicy: open-jev-team-access                 │    │   │    │
+│  │  │  │   Allow: monitoring, team namespaces (label-based)  │    │   │    │
+│  │  │  │   Deny:  all other namespaces by default            │    │   │    │
+│  │  │  └─────────────────────────────────────────────────────┘    │   │    │
+│  │  │  ┌─────────────────────────────────────────────────────┐    │   │    │
+│  │  │  │ HPA: open-jev-hpa                                   │    │   │    │
+│  │  │  │   Metrics: CPU 70%, Memory 80%                      │    │   │    │
+│  │  │  │   Scale: 1→3 replicas, GPU-aware                    │    │   │    │
+│  │  │  └─────────────────────────────────────────────────────┘    │   │    │
+│  │  │  ┌─────────────────────────────────────────────────────┐    │   │    │
+│  │  │  │ Monitoring: ServiceMonitor + Grafana Dashboard      │    │   │    │
+│  │  │  │   Metrics: latency, RPS, GPU util, memory, errors   │    │   │    │
+│  │  │  └─────────────────────────────────────────────────────┘    │   │    │
 │  │  └────────────────────────────────────────────────────────────┘   │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -308,21 +330,81 @@ oc get route open-jev-gateway -n jev-model -o jsonpath='{.spec.host}'
 ```
 
 ---
-
+ 
 ## Team Access Configuration
-
+ 
 ### Gateway Endpoints
-
+ 
 | Endpoint | URL | Use Case |
 |----------|-----|----------|
-| **Team Gateway (HTTPS)** | `https://open-jev-team.apps.<DOMAIN>` | Production team access |
-| **Internal Service** | `http://open-jev.jev-model.svc.cluster.local:8791` | Internal services, sidecars |
+| **Team Gateway (HTTPS)** | `https://open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>` | Production team access |
+| **Team Gateway v1 (OpenAI-compatible)** | `https://open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>/v1/*` | OpenAI-compatible endpoints |
+| **Internal Service** | `http://open-jev.jev-model.svc.cluster.local:8080` | Internal services, sidecars (via auth-proxy) |
 | **Developer Console** | OpenShift Console → Application Menu → AI/ML Services | Discovery |
+ 
+**Replace `<YOUR_CLUSTER_DOMAIN>` with your OpenShift cluster domain** (e.g., `f80l034.fusion.tadn.ibm.com`)
+ 
+### Authentication
+ 
+**Static Bearer Token**: Stored in Kubernetes Secret `open-jev-auth` (namespace: `jev-model`)
+ 
+Create the secret before deploying:
+```bash
+# Generate a secure cookie secret
+COOKIE_SECRET=$(openssl rand -base64 32)
 
-### Authentication Methods
+# Create the secret with your static token
+oc create secret generic open-jev-auth -n jev-model \
+  --from-literal=static-client-secret="YOUR_STATIC_TOKEN_HERE" \
+  --from-literal=cookie-secret="$COOKIE_SECRET"
+```
 
-#### Option 1: Service Account Token (Applications)
+All API requests (except `/health` and `/v1/health`) require:
+```bash
+Authorization: Bearer YOUR_STATIC_TOKEN
+```
+ 
+#### Usage Examples
+ 
+```bash
+# Health check (no auth)
+curl -k https://open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>/health
 
+# Inference (with auth)
+curl -k -X POST https://open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>/v1/predict \
+  -H "Authorization: Bearer YOUR_STATIC_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"state": "...", "questions": {...}}'
+
+# Models endpoint (OpenAI-compatible)
+curl -k -X GET https://open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>/v1/models \
+  -H "Authorization: Bearer YOUR_STATIC_TOKEN"
+```
+ 
+---
+ 
+### Cross-Cluster Consumption
+ 
+For teams on different OpenShift clusters:
+ 
+1. **Network**: Ensure destination cluster can reach `open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>` on port 443
+2. **DNS**: Must resolve the gateway hostname
+3. **Auth**: Use the static token in Authorization header
+ 
+```bash
+# From any cluster with network access
+curl -k -X POST https://open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>/v1/predict \
+  -H "Authorization: Bearer YOUR_STATIC_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"state": "...", "questions": {...}}'
+```
+ 
+---
+ 
+### Legacy: Service Account Token (Applications)
+ 
+If you prefer OpenShift OAuth tokens:
+ 
 ```bash
 # Create SA in team namespace
 oc create sa my-app -n team-alpha
@@ -331,49 +413,30 @@ oc create sa my-app -n team-alpha
 TOKEN=$(oc create token my-app -n team-alpha --duration=24h)
 
 # Use in requests
-curl -X POST https://open-jev-team.apps.<DOMAIN>/predict \
+curl -X POST https://open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>/predict \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"state": "...", "questions": {...}}'
 ```
-
-#### Option 2: User Token (Interactive)
-
-```bash
-TOKEN=$(oc whoami -t)
-curl -X POST https://open-jev-team.apps.<DOMAIN>/predict \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"state": "...", "questions": {...}}'
-```
-
-#### Option 3: Enable Team Namespace Access
-
-```bash
-# Label team namespace for NetworkPolicy access
-oc label namespace team-alpha team-access=enabled team=alpha
-
-# Now pods in team-alpha can access open-jev.jev-model.svc.cluster.local:8791
-```
-
+ 
 ---
-
+ 
 ## API Reference
-
+ 
 ### Health Check
-
+ 
 ```bash
-curl https://open-jev-team.apps.<DOMAIN>/health
-# Response: {"status": "healthy", "model": "open-jev-2b", "gpu": "NVIDIA A100"}
+curl -k https://open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>/health
+# Response: {"status": "healthy", "model": "open-jev-2b", "gpu": "NVIDIA A100", "version": "2b"}
 ```
-
+ 
 ### Inference Request
-
-**POST** `/predict` or `/infer`
-
+ 
+**POST** `/v1/predict` (preferred) or `/predict`
+ 
 ```bash
-curl -X POST https://open-jev-team.apps.<DOMAIN>/predict \
-  -H "Authorization: Bearer $TOKEN" \
+curl -k -X POST https://open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>/v1/predict \
+  -H "Authorization: Bearer YOUR_STATIC_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "state": "The customer order arrived damaged and the customer is requesting a full refund.",
@@ -446,38 +509,51 @@ curl -X POST https://open-jev-team.apps.<DOMAIN>/predict \
 ```
 
 ---
-
+ 
 ## Client Libraries
-
+ 
 ### Python
-
+ 
 ```python
 import requests
 import os
-
+ 
 class OpenJevClient:
-    def __init__(self, base_url: str, token: str = None):
+    def __init__(self, base_url: str = "https://open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>", token: str = None):
         self.base_url = base_url.rstrip('/')
+        self.token = token or os.environ.get("OPEN_JEV_TOKEN")
+        if not self.token:
+            raise ValueError("Token required: set OPEN_JEV_TOKEN env var or pass token parameter")
         self.session = requests.Session()
-        if token:
-            self.session.headers.update({"Authorization": f"Bearer {token}"})
-        self.session.headers.update({"Content-Type": "application/json"})
-
+        self.session.headers.update({
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        })
+        # Disable SSL verify for self-signed certs (remove in production with valid certs)
+        self.session.verify = False
+ 
     def health(self) -> dict:
         return self.session.get(f"{self.base_url}/health", timeout=10).json()
-
+ 
     def predict(self, state: str, questions: dict) -> dict:
         payload = {"state": state, "questions": questions}
-        resp = self.session.post(f"{self.base_url}/predict", json=payload, timeout=120)
+        resp = self.session.post(f"{self.base_url}/v1/predict", json=payload, timeout=120)
         resp.raise_for_status()
         return resp.json()
-
+ 
+    def models(self) -> dict:
+        resp = self.session.get(f"{self.base_url}/v1/models", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+ 
 # Usage
-client = OpenJevClient(
-    base_url="https://open-jev-team.apps.<CLUSTER_DOMAIN>",
-    token=os.environ.get("OC_TOKEN")
-)
-
+# export OPEN_JEV_TOKEN="your-static-token"
+client = OpenJevClient()
+ 
+# Check health
+print(client.health())
+ 
+# Single decision
 result = client.predict(
     state="Customer wants refund for damaged item",
     questions={
@@ -493,10 +569,13 @@ result = client.predict(
 )
 print(f"Decision: {result['predictions']['route']['predicted_label']}")
 print(f"Confidence: {result['predictions']['route']['confidence']:.2%}")
+ 
+# List models
+print(client.models())
 ```
-
+ 
 ### TypeScript/JavaScript
-
+ 
 ```typescript
 interface OpenJevRequest {
   state: string;
@@ -506,7 +585,7 @@ interface OpenJevRequest {
     criteria: Record<string, string>;
   }>;
 }
-
+ 
 interface OpenJevResponse {
   predictions: Record<string, {
     probabilities: Record<string, number>;
@@ -515,18 +594,31 @@ interface OpenJevResponse {
   }>;
   metadata?: { model: string; latency_ms: number };
 }
-
+ 
 class OpenJevClient {
-  constructor(private baseUrl: string, private token?: string) {}
-
-  private headers(): HeadersInit {
-    const h: HeadersInit = { "Content-Type": "application/json" };
-    if (this.token) h["Authorization"] = `Bearer ${this.token}`;
-    return h;
+  constructor(
+    private baseUrl: string = "https://open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>",
+    private token: string = process.env.OPEN_JEV_TOKEN || ""
+  ) {
+    if (!this.token) {
+      throw new Error("Token required: set OPEN_JEV_TOKEN env var");
+    }
   }
-
+ 
+  private headers(): HeadersInit {
+    return {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${this.token}`
+    };
+  }
+ 
+  async health(): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/health`, { headers: this.headers() });
+    return res.json();
+  }
+ 
   async predict(request: OpenJevRequest): Promise<OpenJevResponse> {
-    const res = await fetch(`${this.baseUrl}/predict`, {
+    const res = await fetch(`${this.baseUrl}/v1/predict`, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify(request),
@@ -534,14 +626,17 @@ class OpenJevClient {
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     return res.json();
   }
+ 
+  async models(): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/v1/models`, { headers: this.headers() });
+    return res.json();
+  }
 }
-
+ 
 // Usage
-const client = new OpenJevClient(
-  "https://open-jev-team.apps.<CLUSTER_DOMAIN>",
-  import.meta.env.VITE_OC_TOKEN
-);
-
+// export OPEN_JEV_TOKEN="your-static-token"
+const client = new OpenJevClient();
+ 
 const result = await client.predict({
   state: "Server returning 500 errors on checkout",
   questions: {
@@ -554,6 +649,28 @@ const result = await client.predict({
 });
 console.log(result.predictions.severity.predicted_label);
 ```
+ 
+### cURL Examples (Copy-Paste Ready)
+ 
+```bash
+# Set your token
+export TOKEN="your-static-token-here"
+export DOMAIN="your-cluster-domain"  # e.g., f80l034.fusion.tadn.ibm.com
+ 
+# Health check
+curl -k https://open-jev-team.apps.${DOMAIN}/health
+ 
+# Inference
+curl -k -X POST https://open-jev-team.apps.${DOMAIN}/v1/predict \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"state": "Your context here", "questions": {"q1": {"type": "choice", "instructions": "Choose", "criteria": {"a": "Option A", "b": "Option B"}}}}'
+ 
+# Models
+curl -k -X GET https://open-jev-team.apps.${DOMAIN}/v1/models \
+  -H "Authorization: Bearer ${TOKEN}"
+```
+
 
 ---
 

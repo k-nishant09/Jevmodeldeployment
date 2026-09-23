@@ -116,6 +116,73 @@ spec:
               app: open-jev
       
       containers:
+        # Auth Proxy Sidecar - validates Bearer token before forwarding to Open-Jev
+        # Configure STATIC_CLIENT_SECRET and COOKIE_SECRET via environment variables or secret
+        - name: auth-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--provider=static"
+            - "--static-client-id=open-jev"
+            - "--static-client-secret=$(STATIC_CLIENT_SECRET)"
+            - "--cookie-secret=$(COOKIE_SECRET)"
+            - "--upstream=http://localhost:8791"
+            - "--http-address=0.0.0.0:8080"
+            - "--skip-auth-regex=^/health$"
+            - "--skip-auth-regex=^/v1/health$"
+            - "--skip-auth-regex=^/metrics$"
+            - "--pass-authorization-header=true"
+            - "--set-authorization-header=true"
+            - "--ssl-insecure-skip-verify=true"
+          env:
+            - name: STATIC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: open-jev-auth
+                  key: static-client-secret
+            - name: COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: open-jev-auth
+                  key: cookie-secret
+          ports:
+            - name: auth-proxy
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 0
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+        # Open-Jev Inference Server (only accessible via auth-proxy on localhost)
         - name: open-jev
           # Image from internal ImageStream (built via BuildConfig)
           image: image-registry.openshift-image-registry.svc:5000/jev-model/open-jev:2b
@@ -138,10 +205,10 @@ spec:
             - "1"
             - "--no-prefix-cache"
             - "--host"
-            - "0.0.0.0"
+            - "127.0.0.1"  # Only listen on localhost, auth-proxy handles external
+            - "--port"
+            - "8791"
             # Uncomment if your version supports these:
-            # - "--port"
-            # - "8791"
             # - "--workers"
             # - "1"
           
@@ -174,13 +241,11 @@ spec:
             - name: cache-storage
               mountPath: /home/openjev/.cache
           
-          # Health probes
-          # IMPORTANT: Verify /health endpoint exists in your Open-Jev version
-          # Run: python -m jev.server --help  to check
+          # Health probes - check via auth-proxy on port 8080
           readinessProbe:
             httpGet:
               path: /health
-              port: 8791
+              port: 8080
               scheme: HTTP
             initialDelaySeconds: 90    # Model loading takes time
             periodSeconds: 10
@@ -190,7 +255,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 8791
+              port: 8080
               scheme: HTTP
             initialDelaySeconds: 180   # Longer for initial model load
             periodSeconds: 30
@@ -202,7 +267,7 @@ spec:
           startupProbe:
             httpGet:
               path: /health
-              port: 8791
+              port: 8080
               scheme: HTTP
             initialDelaySeconds: 30
             periodSeconds: 10
@@ -244,7 +309,7 @@ spec:
             - name: OPEN_JEV_NO_PREFIX_CACHE
               value: "1"
             - name: OPEN_JEV_HOST
-              value: "0.0.0.0"
+              value: "127.0.0.1"
             - name: OPEN_JEV_PORT
               value: "8791"
           

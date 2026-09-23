@@ -6,7 +6,7 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Service: Internal cluster access
+# Service: Internal cluster access (points to auth-proxy on port 8080)
 # -----------------------------------------------------------------------------
 apiVersion: v1
 kind: Service
@@ -22,7 +22,7 @@ metadata:
     # service.mesh.openshift.io/mtls: "strict"
     # Prometheus service discovery
     prometheus.io/scrape: "true"
-    prometheus.io/port: "8791"
+    prometheus.io/port: "8080"
     prometheus.io/path: "/metrics"
 spec:
   type: ClusterIP
@@ -30,8 +30,8 @@ spec:
     app: open-jev
   ports:
     - name: http
-      port: 8791
-      targetPort: 8791
+      port: 8080
+      targetPort: 8080
       protocol: TCP
       # appProtocol: http  # For service mesh routing
     # - name: metrics
@@ -47,6 +47,7 @@ spec:
 # -----------------------------------------------------------------------------
 # Route: External access (HTTPS with edge termination)
 # -----------------------------------------------------------------------------
+# BEFORE APPLYING: Replace <YOUR_CLUSTER_DOMAIN> with your OpenShift cluster domain
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
@@ -67,7 +68,7 @@ metadata:
     # openshift.io/tls-key: ""
     # openshift.io/tls-ca: ""
 spec:
-  host: open-jev-jev-model.apps.<YOUR_CLUSTER_DOMAIN>  # CHANGE THIS
+  host: open-jev-jev-model.apps.<YOUR_CLUSTER_DOMAIN>
   to:
     kind: Service
     name: open-jev

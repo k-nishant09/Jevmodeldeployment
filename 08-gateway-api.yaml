@@ -8,6 +8,9 @@
 # 4. API Gateway (3scale/Apicast) - for managed API access
 #
 # Apply: oc apply -f 08-gateway-api.yaml -n jev-model
+#
+# BEFORE APPLYING: Replace <YOUR_CLUSTER_DOMAIN> with your OpenShift cluster domain
+# e.g., f80l034.fusion.tadn.ibm.com
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -31,14 +34,51 @@ metadata:
     haproxy.router.openshift.io/rate-limit-period: "1s"
     # Timeout for long inference requests
     haproxy.router.openshift.io/timeout: "120s"
-    # Enable compression
+    # Path rewrite: /v1/* -> /* (so /v1/models -> /models, /v1/predict -> /predict)
     haproxy.router.openshift.io/rewrite-target: "/"
     # CORS for browser-based team tools
-    # haproxy.router.openshift.io/cors-allow-origin: "*"
-    # haproxy.router.openshift.io/cors-allow-methods: "GET,POST,OPTIONS"
-    # haproxy.router.openshift.io/cors-allow-headers: "Content-Type,Authorization"
+    haproxy.router.openshift.io/cors-allow-origin: "*"
+    haproxy.router.openshift.io/cors-allow-methods: "GET,POST,OPTIONS"
+    haproxy.router.openshift.io/cors-allow-headers: "Content-Type,Authorization"
 spec:
-  host: open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>  # CHANGE THIS
+  host: open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>
+  to:
+    kind: Service
+    name: open-jev
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+---
+# -----------------------------------------------------------------------------
+# 2. Additional Route for /v1/* path prefix (OpenAI-compatible style)
+# -----------------------------------------------------------------------------
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: open-jev-gateway-v1
+  namespace: jev-model
+  labels:
+    app: open-jev
+    component: gateway
+    exposure: team
+  annotations:
+    openshift.io/display-name: "Open-Jev Team Gateway v1"
+    openshift.io/description: "Open-Jev 2B Inference API with /v1 path prefix"
+    haproxy.router.openshift.io/rate-limit-connections: "100"
+    haproxy.router.openshift.io/rate-limit-period: "1s"
+    haproxy.router.openshift.io/timeout: "120s"
+    # Rewrite /v1/* to /* for backend compatibility
+    haproxy.router.openshift.io/rewrite-target: "/"
+    haproxy.router.openshift.io/cors-allow-origin: "*"
+    haproxy.router.openshift.io/cors-allow-methods: "GET,POST,OPTIONS"
+    haproxy.router.openshift.io/cors-allow-headers: "Content-Type,Authorization"
+spec:
+  host: open-jev-team.apps.<YOUR_CLUSTER_DOMAIN>
+  path: /v1
   to:
     kind: Service
     name: open-jev

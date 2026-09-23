@@ -1,13 +1,29 @@
 # =============================================================================
-# Open-Jev RBAC, ServiceAccount, and SCC for OpenShift
+# Open-Jev RBAC, ServiceAccount, Secret, and SCC for OpenShift
 # =============================================================================
 # OpenShift Security Context Constraints (SCC) for GPU workloads
 # Apply: oc apply -f 05-rbac-scc.yaml -n jev-model
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# ServiceAccount
+# Secret for Auth Proxy (CREATE THIS WITH YOUR VALUES BEFORE DEPLOYING)
 # -----------------------------------------------------------------------------
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: open-jev-auth
+#   namespace: jev-model
+#   labels:
+#     app: open-jev
+# type: Opaque
+# stringData:
+#   static-client-secret: "REPLACE_WITH_YOUR_STATIC_TOKEN"  # e.g., IsfPassw0rd
+#   cookie-secret: "REPLACE_WITH_RANDOM_32_CHAR_STRING"     # Generate with: openssl rand -base64 32
+# ---
+#
+# # -----------------------------------------------------------------------------
+# # ServiceAccount
+# # -----------------------------------------------------------------------------
 apiVersion: v1
 kind: ServiceAccount
 metadata:
