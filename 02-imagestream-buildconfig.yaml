@@ -1,0 +1,162 @@
+# =============================================================================
+# OpenShift ImageStream and BuildConfig for Open-Jev
+# =============================================================================
+# This enables native OpenShift builds using the Dockerfile
+# Apply: oc apply -f 02-imagestream-buildconfig.yaml -n jev-model
+# =============================================================================
+
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: open-jev
+  namespace: jev-model
+  labels:
+    app: open-jev
+    component: inference-server
+  annotations:
+    openshift.io/display-name: "Open-Jev Inference Server"
+spec:
+  lookupPolicy:
+    local: true
+  tags:
+    - name: "2b"
+      annotations:
+        openshift.io/display-name: "Open-Jev 2B"
+      from:
+        kind: DockerImage
+        name: "registry.access.redhat.com/ubi9/python-311:latest"
+      importPolicy:
+        scheduled: true
+      referencePolicy:
+        type: Local
+    - name: "latest"
+      from:
+        kind: ImageStreamTag
+        name: "open-jev:2b"
+      referencePolicy:
+        type: Local
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: open-jev-build
+  namespace: jev-model
+  labels:
+    app: open-jev
+    component: inference-server
+  annotations:
+    openshift.io/display-name: "Open-Jev Build"
+spec:
+  # Build strategy: Docker build from Dockerfile
+  strategy:
+    type: Docker
+    dockerStrategy:
+      # Build arguments for customization
+      buildArgs:
+        - name: "OPEN_JEV_VERSION"
+          value: "2b"
+        - name: "PYTHON_VERSION"
+          value: "3.11"
+      # No cache for reproducible builds in air-gapped environments
+      noCache: false
+      # Pull base image from internal registry if air-gapped
+      # pullSecret:
+      #   name: "internal-registry-pull-secret"
+  
+  # Source: Git repository with Open-Jev source
+  source:
+    type: Git
+    git:
+      uri: "https://github.com/Zefan-Cai/Open-Jev.git"
+      ref: "main"
+    # For air-gapped: use a local git mirror or binary build
+    # contextDir: "Open-Jev"
+    # dockerfilePath: "Dockerfile"
+  
+  # Output to ImageStream
+  output:
+    to:
+      kind: ImageStreamTag
+      name: "open-jev:2b"
+  
+  # Trigger builds on image change or config change
+  triggers:
+    - type: ImageChange
+      imageChange:
+        from:
+          kind: ImageStreamTag
+          name: "ubi9/python-311:latest"
+          namespace: openshift
+    - type: ConfigChange
+    - type: GitHub
+      github:
+        secret: "github-webhook-secret"
+  
+  # Resource limits for build pod
+  resources:
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+  
+  # Build completion handling
+  successfulBuildsHistoryLimit: 5
+  failedBuildsHistoryLimit: 3
+  
+  # Node selector for build (optional - run on specific nodes)
+  # nodeSelector:
+  #   node-role.kubernetes.io/worker: ""
+  
+  # For air-gapped: specify service account with registry pull permissions
+  # serviceAccount: builder
+---
+# =============================================================================
+# Alternative: Binary BuildConfig for Air-Gapped Environments
+# =============================================================================
+# Use this instead of the Git-based BuildConfig above when the cluster
+# cannot reach GitHub. You push the source directly from your machine.
+#
+# Usage:
+#   oc start-build open-jev-binary-build --from-dir=. --follow -n jev-model
+#
+# apiVersion: build.openshift.io/v1
+# kind: BuildConfig
+# metadata:
+#   name: open-jev-binary-build
+#   namespace: jev-model
+#   labels:
+#     app: open-jev
+#     component: inference-server
+# spec:
+#   strategy:
+#     type: Docker
+#     dockerStrategy:
+#       from:
+#         kind: ImageStreamTag
+#         name: "ubi9/python-311:latest"
+#         namespace: openshift
+#   source:
+#     type: Binary
+#     binary:
+#       asFile: ""
+#   output:
+#     to:
+#       kind: ImageStreamTag
+#       name: "open-jev:2b"
+#   triggers:
+#     - type: ConfigChange
+#     - type: ImageChange
+#       imageChange:
+#         from:
+#           kind: ImageStreamTag
+#           name: "ubi9/python-311:latest"
+#           namespace: openshift
+#   resources:
+#     limits:
+#       cpu: "2"
+#       memory: "4Gi"
+#     requests:
+#       cpu: "500m"
+#       memory: "1Gi"

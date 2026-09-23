@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jev-model-pvc
+  namespace: jev-model
+  labels:
+    app: open-jev
+    component: model-storage
+  annotations:
+    # For OpenShift Data Foundation / ODF / Ceph RBD
+    # volume.beta.kubernetes.io/storage-class: ocs-storagecluster-ceph-rbd
+    # For AWS EBS gp3
+    # volume.beta.kubernetes.io/storage-class: gp3
+    # For generic OpenShift CSI
+    # volume.beta.kubernetes.io/storage-class: thin-csi
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  # Storage class name - CHANGE THIS for your environment
+  # Examples:
+  # storageClassName: ocs-storagecluster-ceph-rbd      # ODF/Ceph
+  # storageClassName: gp3                              # AWS EBS
+  # storageClassName: managed-csi                      # Azure Disk
+  # storageClassName: thin-csi                         # Generic CSI
+  storageClassName: thin-csi
+---
+# Optional: PersistentVolume for static provisioning (if not using dynamic provisioning)
+# apiVersion: v1
+# kind: PersistentVolume
+# metadata:
+#   name: jev-model-pv
+#   labels:
+#     app: open-jev
+# spec:
+#   capacity:
+#     storage: 50Gi
+#   accessModes:
+#     - ReadWriteOnce
+#   persistentVolumeReclaimPolicy: Retain
+#   storageClassName: thin-csi
+#   csi:
+#     driver: openshift-storage.ceph.rook.io
+#     volumeHandle: <ceph-volume-handle>
+#     fsType: ext4

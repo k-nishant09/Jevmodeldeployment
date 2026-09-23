@@ -1,0 +1,139 @@
+# =============================================================================
+# Open-Jev Service and Route for OpenShift
+# =============================================================================
+# Namespace: jev-model
+# Apply: oc apply -f 04-service-route.yaml -n jev-model
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Service: Internal cluster access
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-jev
+  namespace: jev-model
+  labels:
+    app: open-jev
+    component: inference-server
+  annotations:
+    openshift.io/display-name: "Open-Jev Inference Service"
+    # For service mesh / mTLS (if using OpenShift Service Mesh)
+    # service.mesh.openshift.io/mtls: "strict"
+    # Prometheus service discovery
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8791"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app: open-jev
+  ports:
+    - name: http
+      port: 8791
+      targetPort: 8791
+      protocol: TCP
+      # appProtocol: http  # For service mesh routing
+    # - name: metrics
+    #   port: 9090
+    #   targetPort: 9090
+    #   protocol: TCP
+  # Session affinity for sticky sessions (if needed)
+  # sessionAffinity: ClientIP
+  # sessionAffinityConfig:
+  #   clientIP:
+  #     timeoutSeconds: 10800
+---
+# -----------------------------------------------------------------------------
+# Route: External access (HTTPS with edge termination)
+# -----------------------------------------------------------------------------
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: open-jev
+  namespace: jev-model
+  labels:
+    app: open-jev
+    component: inference-server
+  annotations:
+    openshift.io/display-name: "Open-Jev External Route"
+    # For custom domain (optional)
+    # haproxy.router.openshift.io/rewrite-target: "/"
+    # Rate limiting (if using OpenShift router)
+    # haproxy.router.openshift.io/rate-limit-connections: "100"
+    # haproxy.router.openshift.io/rate-limit-period: "1s"
+    # TLS certificate (if using custom cert)
+    # openshift.io/tls-cert: ""
+    # openshift.io/tls-key: ""
+    # openshift.io/tls-ca: ""
+spec:
+  host: open-jev-jev-model.apps.<YOUR_CLUSTER_DOMAIN>  # CHANGE THIS
+  to:
+    kind: Service
+    name: open-jev
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  # For passthrough TLS (if server handles TLS):
+  # tls:
+  #   termination: passthrough
+  #   insecureEdgeTerminationPolicy: Redirect
+  # For re-encrypt (router terminates, then re-encrypts to pod):
+  # tls:
+  #   termination: reencrypt
+  #   insecureEdgeTerminationPolicy: Redirect
+  #   destinationCACertificate: |
+  #     -----BEGIN CERTIFICATE-----
+  #     ...
+  #     -----END CERTIFICATE-----
+  wildcardPolicy: None
+---
+# -----------------------------------------------------------------------------
+# Alternative Route: Passthrough TLS (if Open-Jev serves HTTPS directly)
+# -----------------------------------------------------------------------------
+# apiVersion: route.openshift.io/v1
+# kind: Route
+# metadata:
+#   name: open-jev-passthrough
+#   namespace: jev-model
+#   labels:
+#     app: open-jev
+# spec:
+#   host: open-jev-passthrough-jev-model.apps.<YOUR_CLUSTER_DOMAIN>
+#   to:
+#     kind: Service
+#     name: open-jev
+#   port:
+#     targetPort: https  # Requires HTTPS port in service
+#   tls:
+#     termination: passthrough
+#     insecureEdgeTerminationPolicy: Redirect
+#   wildcardPolicy: None
+---
+# -----------------------------------------------------------------------------
+# ServiceMonitor for Prometheus (OpenShift Monitoring)
+# -----------------------------------------------------------------------------
+# Requires: openshift-monitoring namespace and cluster-monitoring-config
+# apiVersion: monitoring.coreos.com/v1
+# kind: ServiceMonitor
+# metadata:
+#   name: open-jev-monitor
+#   namespace: jev-model
+#   labels:
+#     app: open-jev
+#     release: prometheus
+# spec:
+#   selector:
+#     matchLabels:
+#       app: open-jev
+#   endpoints:
+#     - port: http
+#       path: /metrics
+#       interval: 30s
+#       scheme: http
+#   namespaceSelector:
+#     matchNames:
+#       - jev-model

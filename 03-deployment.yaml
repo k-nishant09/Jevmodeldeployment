@@ -1,0 +1,324 @@
+# =============================================================================
+# Open-Jev Deployment for OpenShift
+# =============================================================================
+# Namespace: jev-model
+# GPU: Requires NVIDIA GPU Operator installed on cluster
+# Model: Mounted via PVC at /models
+# Apply: oc apply -f 03-deployment.yaml -n jev-model
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-jev
+  namespace: jev-model
+  labels:
+    app: open-jev
+    component: inference-server
+    version: "2b"
+  annotations:
+    openshift.io/display-name: "Open-Jev 2B Inference Server"
+    # For OpenShift AI / RHOAI model mesh integration
+    # opendatahub.io/model-name: "open-jev-2b"
+spec:
+  replicas: 1
+  # Strategy for rolling updates - important for GPU workloads
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0          # No extra pods during update (GPU constraint)
+      maxUnavailable: 1    # Allow 1 pod down during update
+  selector:
+    matchLabels:
+      app: open-jev
+  template:
+    metadata:
+      labels:
+        app: open-jev
+        component: inference-server
+        version: "2b"
+      annotations:
+        # Prometheus scraping annotations (if using OpenShift monitoring)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8791"
+        prometheus.io/path: "/metrics"
+        # GPU feature discovery
+        # nvidia.com/gpu.deploy: "all"
+    spec:
+      # Service account for pulling from internal registry (if needed)
+      # serviceAccountName: open-jev-sa
+      
+      # Security context for OpenShift SCC compliance
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 0
+        fsGroup: 0
+        supplementalGroups: [0]
+        seccompProfile:
+          type: RuntimeDefault
+      
+      # Priority class for GPU workloads (create this separately if needed)
+      # priorityClassName: gpu-workload-high
+      
+      # Node affinity for GPU nodes
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.present
+                    operator: Exists
+          # Prefer nodes with more GPU memory
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 50
+              preference:
+                matchExpressions:
+                  - key: nvidia.com/gpu.product
+                    operator: In
+                    values:
+                      - "NVIDIA-A100"
+                      - "NVIDIA-A40"
+                      - "NVIDIA-RTX-6000"
+                      - "NVIDIA-H100"
+                      - "NVIDIA-GB300"
+        # Pod anti-affinity to spread replicas across nodes
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - open-jev
+                topologyKey: kubernetes.io/hostname
+      
+      # Tolerations for GPU nodes (if tainted)
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+        # Add any custom GPU node taints here
+        # - key: "gpu-node"
+        #   operator: "Equal"
+        #   value: "true"
+        #   effect: "NoSchedule"
+      
+      # Topology spread for HA (when replicas > 1)
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: open-jev
+      
+      containers:
+        - name: open-jev
+          # Image from internal ImageStream (built via BuildConfig)
+          image: image-registry.openshift-image-registry.svc:5000/jev-model/open-jev:2b
+          # For external registry: <YOUR_REGISTRY>/ai/open-jev:2b
+          imagePullPolicy: Always
+          
+          # Command and args - override Dockerfile CMD
+          command:
+            - "python"
+            - "-m"
+            - "jev.server"
+          args:
+            - "--checkpoint"
+            - "/models/Open-Jev-2B/package/checkpoint"
+            - "--device"
+            - "cuda:0"
+            - "--max-length"
+            - "4096"
+            - "--batch-size"
+            - "1"
+            - "--no-prefix-cache"
+            - "--host"
+            - "0.0.0.0"
+            # Uncomment if your version supports these:
+            # - "--port"
+            # - "8791"
+            # - "--workers"
+            # - "1"
+          
+          # Ports
+          ports:
+            - name: http
+              containerPort: 8791
+              protocol: TCP
+            # - name: metrics
+            #   containerPort: 9090
+            #   protocol: TCP
+          
+          # Resource requests and limits
+          resources:
+            requests:
+              cpu: "4"
+              memory: "16Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: "32Gi"
+              nvidia.com/gpu: "1"
+          
+          # Volume mounts
+          volumeMounts:
+            - name: model-storage
+              mountPath: /models
+              readOnly: true
+            # Optional: cache volume for HF_HOME / TRANSFORMERS_CACHE
+            - name: cache-storage
+              mountPath: /home/openjev/.cache
+          
+          # Health probes
+          # IMPORTANT: Verify /health endpoint exists in your Open-Jev version
+          # Run: python -m jev.server --help  to check
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8791
+              scheme: HTTP
+            initialDelaySeconds: 90    # Model loading takes time
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6        # 60 seconds total before marking unready
+            successThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8791
+              scheme: HTTP
+            initialDelaySeconds: 180   # Longer for initial model load
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3        # 90 seconds before restart
+            successThreshold: 1
+          
+          # Startup probe for slow model loading
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8791
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30       # 5 minutes max for model load
+            successThreshold: 1
+          
+          # Environment variables
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: PYTHONPATH
+              value: "/app/Open-Jev"
+            - name: HF_HOME
+              value: "/home/openjev/.cache/huggingface"
+            - name: TRANSFORMERS_CACHE
+              value: "/home/openjev/.cache/huggingface"
+            - name: TORCH_HOME
+              value: "/home/openjev/.cache/torch"
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0"
+            # For air-gapped: disable HF Hub calls
+            - name: HF_HUB_OFFLINE
+              value: "1"
+            - name: TRANSFORMERS_OFFLINE
+              value: "1"
+            # Logging
+            - name: LOG_LEVEL
+              value: "INFO"
+            # Model configuration (can be overridden)
+            - name: OPEN_JEV_CHECKPOINT
+              value: "/models/Open-Jev-2B/package/checkpoint"
+            - name: OPEN_JEV_DEVICE
+              value: "cuda:0"
+            - name: OPEN_JEV_MAX_LENGTH
+              value: "4096"
+            - name: OPEN_JEV_BATCH_SIZE
+              value: "1"
+            - name: OPEN_JEV_NO_PREFIX_CACHE
+              value: "1"
+            - name: OPEN_JEV_HOST
+              value: "0.0.0.0"
+            - name: OPEN_JEV_PORT
+              value: "8791"
+          
+          # Security context for container
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false  # Needed for HF cache writes
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 0
+      
+      # Volumes
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: jev-model-pvc
+        # EmptyDir for cache (consider PVC for persistence across restarts)
+        - name: cache-storage
+          emptyDir:
+            sizeLimit: 5Gi
+            medium: ""  # Use default storage (can be Memory for faster cache)
+      
+      # DNS and hostname
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      
+      # Termination grace period for model cleanup
+      terminationGracePeriodSeconds: 60
+---
+# =============================================================================
+# Optional: HorizontalPodAutoscaler for scaling based on CPU/Memory
+# =============================================================================
+# apiVersion: autoscaling/v2
+# kind: HorizontalPodAutoscaler
+# metadata:
+#   name: open-jev-hpa
+#   namespace: jev-model
+# spec:
+#   scaleTargetRef:
+#     apiVersion: apps/v1
+#     kind: Deployment
+#     name: open-jev
+#   minReplicas: 1
+#   maxReplicas: 3
+#   metrics:
+#     - type: Resource
+#       resource:
+#         name: cpu
+#         target:
+#           type: Utilization
+#           averageUtilization: 70
+#     - type: Resource
+#       resource:
+#         name: memory
+#         target:
+#           type: Utilization
+#           averageUtilization: 80
+#   behavior:
+#     scaleDown:
+#       stabilizationWindowSeconds: 300
+#       policies:
+#         - type: Percent
+#           value: 10
+#           periodSeconds: 60
+#     scaleUp:
+#       stabilizationWindowSeconds: 60
+#       policies:
+#         - type: Percent
+#           value: 50
+#           periodSeconds: 60
+#         - type: Pods
+#           value: 1
+#           periodSeconds: 60
+#       selectPolicy: Max

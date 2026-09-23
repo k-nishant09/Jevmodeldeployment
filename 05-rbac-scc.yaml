@@ -1,0 +1,148 @@
+# =============================================================================
+# Open-Jev RBAC, ServiceAccount, and SCC for OpenShift
+# =============================================================================
+# OpenShift Security Context Constraints (SCC) for GPU workloads
+# Apply: oc apply -f 05-rbac-scc.yaml -n jev-model
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# ServiceAccount
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: open-jev-sa
+  namespace: jev-model
+  labels:
+    app: open-jev
+    component: inference-server
+  annotations:
+    openshift.io/display-name: "Open-Jev Service Account"
+---
+# -----------------------------------------------------------------------------
+# Role for Open-Jev (if needed for custom resources)
+# -----------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: open-jev-role
+  namespace: jev-model
+  labels:
+    app: open-jev
+rules:
+  # Allow reading own pods/configmaps
+  - apiGroups: [""]
+    resources: ["pods", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  # Allow updating own deployment status (for operators)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "patch"]
+---
+# -----------------------------------------------------------------------------
+# RoleBinding
+# -----------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: open-jev-rolebinding
+  namespace: jev-model
+  labels:
+    app: open-jev
+subjects:
+  - kind: ServiceAccount
+    name: open-jev-sa
+    namespace: jev-model
+roleRef:
+  kind: Role
+  name: open-jev-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# -----------------------------------------------------------------------------
+# SecurityContextConstraints for GPU workloads
+# -----------------------------------------------------------------------------
+# This SCC allows the necessary privileges for NVIDIA GPU workloads
+# Apply as cluster-admin: oc apply -f 05-rbac-scc.yaml
+# Then bind to SA: oc adm policy add-scc-to-user open-jev-gpu-scc -z open-jev-sa -n jev-model
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: open-jev-gpu-scc
+  annotations:
+    kubernetes.io/description: "SCC for Open-Jev GPU inference workloads"
+    openshift.io/display-name: "Open-Jev GPU SCC"
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities:
+  - "CAP_DAC_OVERRIDE"  # For GPU device access
+  - "CAP_SYS_RESOURCE"  # For memory locking
+defaultAddCapabilities: null
+fsGroup:
+  type: RunAsAny
+groups: []
+priority: 10
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - "KILL"
+  - "MKNOD"
+  - "SETUID"
+  - "SETGID"
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: MustRunAs
+seccompProfiles:
+  - "runtime/default"
+supplementalGroups:
+  type: RunAsAny
+users: []
+volumes:
+  - "configMap"
+  - "downwardAPI"
+  - "emptyDir"
+  - "persistentVolumeClaim"
+  - "projected"
+  - "secret"
+---
+# -----------------------------------------------------------------------------
+# SCC Binding (run as cluster-admin after applying SCC)
+# -----------------------------------------------------------------------------
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: ClusterRole
+# metadata:
+#   name: system:open-scc-open-jev-gpu-scc
+# rules:
+#   - apiGroups:
+#       - security.openshift.io
+#     resourceNames:
+#       - open-jev-gpu-scc
+#     resources:
+#       - securitycontextconstraints
+#     verbs:
+#       - use
+# ---
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: ClusterRoleBinding
+# metadata:
+#   name: system:open-scc-open-jev-gpu-scc
+# subjects:
+#   - kind: ServiceAccount
+#     name: open-jev-sa
+#     namespace: jev-model
+# roleRef:
+#   kind: ClusterRole
+#   name: system:open-scc-open-jev-gpu-scc
+#   apiGroup: rbac.authorization.k8s.io
+---
+# -----------------------------------------------------------------------------
+# Alternative: Use restricted-v2 SCC (OpenShift 4.11+) with GPU device plugin
+# -----------------------------------------------------------------------------
+# The restricted-v2 SCC in modern OpenShift supports GPU workloads
+# when the NVIDIA GPU Operator is installed.
+# Just bind the SA to restricted-v2:
+# oc adm policy add-scc-to-user restricted-v2 -z open-jev-sa -n jev-model
