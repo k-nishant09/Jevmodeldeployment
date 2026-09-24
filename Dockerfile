@@ -1,19 +1,22 @@
 # Open-Jev Container Image for OpenShift
 # Multi-stage build for smaller production image
+# Uses Red Hat UBI Python images (no Docker Hub rate limits)
 # =============================================================================
-# Build stage: install dependencies and Open-Jev runtime
+# Build stage: install dependencies and Open-Jev runtime (runs as root)
 # =============================================================================
-FROM python:3.11-slim AS builder
+FROM registry.access.redhat.com/ubi9/python-311:latest AS builder
+
+# Switch to root for package installation
+USER root
 
 WORKDIR /app
 
 # Install system dependencies needed for building
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+RUN dnf install -y --setopt=install_weak_deps=False \
     git \
     gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+    gcc-c++ \
+    && dnf clean all
 
 # Copy Open-Jev source code
 COPY Open-Jev /app/Open-Jev
@@ -22,25 +25,32 @@ WORKDIR /app/Open-Jev
 
 # Install Open-Jev in development mode with training extras
 # This compiles any C extensions and installs all dependencies
+# Use pip install --target to control install location
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -e . && \
     pip install --no-cache-dir -e '.[train]'
 
+# Find and copy site-packages to a known location for multi-stage copy
+RUN python3 -c "import site; print(site.getsitepackages()[0])" > /site-packages-path.txt && \
+    cp -r $(cat /site-packages-path.txt) /site-packages
+
 # =============================================================================
 # Runtime stage: minimal image with only runtime dependencies
 # =============================================================================
-FROM python:3.11-slim AS runtime
+FROM registry.access.redhat.com/ubi9/python-311:latest AS runtime
+
+# Switch to root for package installation
+USER root
 
 WORKDIR /app
 
 # Install only runtime system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
+RUN dnf install -y --setopt=install_weak_deps=False \
+    libgomp \
+    && dnf clean all
 
-# Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+# Copy installed packages from builder (from known location)
+COPY --from=builder /site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy Open-Jev source code (needed for runtime imports)

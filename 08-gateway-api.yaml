@@ -10,7 +10,7 @@
 # Apply: oc apply -f 08-gateway-api.yaml -n jev-model
 #
 # BEFORE APPLYING: Replace <YOUR_CLUSTER_DOMAIN> with your OpenShift cluster domain
-# e.g., f80l034.fusion.tadn.ibm.com
+# e.g., apps.example.com
 # =============================================================================
 
 # -----------------------------------------------------------------------------

@@ -20,7 +20,7 @@ Complete deployment package for running Open-Jev 2B inference on OpenShift with 
 │  │  │ │ Auth Proxy (8080)   │ │ │ Qwen + OpenJev  │ │                │  │    │
 │  │  │ │   oauth2-proxy      │ │ │                 │ │                │  │    │
 │  │  │ │   Static token      │ │ │                 │ │                │  │    │
-│  │  │ │   IsfPassw0rd       │ │ │                 │ │                │  │    │
+│  │  │ │   Bearer Auth       │ │ │                 │ │                │  │    │
 │  │  │ └─────────┬───────────┘ │ │                 │ │                │  │    │
 │  │  │           │             │ │                 │ │                │  │    │
 │  │  │ ┌─────────▼───────────┐ │ │                 │ │                │  │    │
@@ -34,7 +34,7 @@ Complete deployment package for running Open-Jev 2B inference on OpenShift with 
 │  │  │                    GATEWAY EXPOSURE LAYER                     │   │    │
 │  │  │  ┌─────────────────────────────────────────────────────┐    │   │    │
 │  │  │  │ Route: open-jev-gateway                             │    │   │    │
-│  │  │  │   Host: open-jev-team.apps.f80l034.fusion.tadn.ibm.com│   │   │    │
+│  │  │  │   Host: open-jev-team.apps.<CLUSTER_DOMAIN>         │    │   │    │
 │  │  │  │   TLS: Edge termination, HTTPS redirect             │    │   │    │
 │  │  │  │   Rate Limit: 100 req/s per client                  │    │   │    │
 │  │  │  │   Timeout: 120s for inference                       │    │   │    │
@@ -42,13 +42,13 @@ Complete deployment package for running Open-Jev 2B inference on OpenShift with 
 │  │  │  └─────────────────────────────────────────────────────┘    │   │    │
 │  │  │  ┌─────────────────────────────────────────────────────┐    │   │    │
 │  │  │  │ Route: open-jev-gateway-v1                          │    │   │    │
-│  │  │  │   Host: open-jev-team.apps.f80l034.fusion.tadn.ibm.com│   │   │    │
+│  │  │  │   Host: open-jev-team.apps.<CLUSTER_DOMAIN>         │    │   │    │
 │  │  │  │   Path: /v1/* (rewrites /v1/* → /*)                 │    │   │    │
 │  │  │  │   OpenAI-compatible endpoints                       │    │   │    │
 │  │  │  └─────────────────────────────────────────────────────┘    │   │    │
 │  │  │  ┌─────────────────────────────────────────────────────┐    │   │    │
-│  │  │  │ Auth: Static Bearer Token = IsfPassw0rd             │    │   │    │
-│  │  │  │   Header: Authorization: Bearer IsfPassw0rd         │    │   │    │
+│  │  │  │ Auth: Static Bearer Token                           │    │   │    │
+│  │  │  │   Header: Authorization: Bearer <TOKEN>             │    │   │    │
 │  │  │  │   Health endpoint: no auth required                 │    │   │    │
 │  │  │  └─────────────────────────────────────────────────────┘    │   │    │
 │  │  │  ┌─────────────────────────────────────────────────────┐    │   │    │
@@ -81,7 +81,7 @@ Complete deployment package for running Open-Jev 2B inference on OpenShift with 
 | **GPU Nodes** | At least 1 node with `nvidia.com/gpu.present=true` label |
 | **Storage** | ~50GB available for PVC (adjust per storage class) |
 | **CLI Tools** | `oc`, `jq`, `git`, `curl` |
-| **Network** | VPN/access to `api.f80l034.fusion.tadn.ibm.com:6443` |
+| **Network** | Access to OpenShift API `https://<API_URL>:6443` |
 
 ### Verify Prerequisites
 
@@ -121,8 +121,8 @@ chmod +x deploy_openjev.sh 07-test-inference.sh 06-model-loading/*.sh
 ### 3. Login to OpenShift
 
 ```bash
-oc login --token=sha256~BMB3kgB_CY9R4UM2n5poIsADjCAly7dk6GlVHoDhFbA \
-         --server=https://api.f80l034.fusion.tadn.ibm.com:6443
+oc login --token=<YOUR_OPENSHIFT_TOKEN> \
+         --server=https://api.<YOUR_CLUSTER_DOMAIN>:6443
 ```
 
 ### 4. Run Full Deployment
@@ -342,7 +342,7 @@ oc get route open-jev-gateway -n jev-model -o jsonpath='{.spec.host}'
 | **Internal Service** | `http://open-jev.jev-model.svc.cluster.local:8080` | Internal services, sidecars (via auth-proxy) |
 | **Developer Console** | OpenShift Console → Application Menu → AI/ML Services | Discovery |
  
-**Replace `<YOUR_CLUSTER_DOMAIN>` with your OpenShift cluster domain** (e.g., `f80l034.fusion.tadn.ibm.com`)
+**Replace `<YOUR_CLUSTER_DOMAIN>` with your OpenShift cluster domain** (e.g., `example.com`)
  
 ### Authentication
  
@@ -655,7 +655,7 @@ console.log(result.predictions.severity.predicted_label);
 ```bash
 # Set your token
 export TOKEN="your-static-token-here"
-export DOMAIN="your-cluster-domain"  # e.g., f80l034.fusion.tadn.ibm.com
+export DOMAIN="your-cluster-domain"  # e.g., apps.example.com
  
 # Health check
 curl -k https://open-jev-team.apps.${DOMAIN}/health

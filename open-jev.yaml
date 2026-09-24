@@ -1,0 +1,383 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jev-model
+  labels:
+    app: open-jev
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: huggingface-token
+  namespace: jev-model
+type: Opaque
+stringData:
+  HF_TOKEN: "REPLACE_WITH_YOUR_HF_TOKEN"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: open-jev-auth
+  namespace: jev-model
+type: Opaque
+stringData:
+  static-password: "REPLACE_WITH_YOUR_STATIC_TOKEN"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jev-model-cache
+  namespace: jev-model
+  labels:
+    app: open-jev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: ocs-storagecluster-ceph-rbd
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-jev
+  namespace: jev-model
+  labels:
+    app: open-jev
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: open-jev
+  template:
+    metadata:
+      labels:
+        app: open-jev
+    spec:
+      serviceAccountName: default
+
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      initContainers:
+        - name: download-model
+          image: registry.access.redhat.com/ubi9/python-311:latest
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: huggingface-token
+                  key: HF_TOKEN
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -ex
+              if [ -d "/models/open-jev-2b/package/checkpoint" ]; then
+                echo "Model checkpoint already exists in /models/open-jev-2b. Skipping download."
+                exit 0
+              fi
+
+              echo "Installing Hugging Face Hub library..."
+              pip install --no-cache-dir -U huggingface_hub
+
+              echo "Downloading Open-Jev 2B via python snapshot_download..."
+              python3 -c '
+              import os
+              from huggingface_hub import snapshot_download
+              token = os.environ.get("HF_TOKEN")
+              print(f"Starting snapshot download with token provided: {bool(token)}")
+              snapshot_download(
+                  repo_id="ZefanCai/Open-Jev-2B",
+                  local_dir="/models/open-jev-2b",
+                  token=token
+              )
+              print("Snapshot download finished successfully.")
+              '
+
+              echo "Model download completed."
+              find /models/open-jev-2b -maxdepth 3 -type f | head -30
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+      containers:
+        - name: auth-proxy
+          image: registry.access.redhat.com/ubi9/python-311:latest
+          env:
+            - name: STATIC_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: open-jev-auth
+                  key: static-password
+          command:
+            - /bin/bash
+            - -c
+            - |
+              cat << 'EOF' > /tmp/proxy.py
+              import http.server
+              import urllib.request
+              import urllib.error
+              import socketserver
+
+              import os
+
+              PORT = 8080
+              TARGET = "http://127.0.0.1:8791"
+              STATIC_TOKEN = "Bearer " + os.environ.get("STATIC_AUTH_TOKEN", "CHANGE_ME")
+
+              class ProxyHandler(http.server.BaseHTTPRequestHandler):
+                  def do_OPTIONS(self):
+                      self.send_response(204)
+                      self.send_header('Access-Control-Allow-Origin', '*')
+                      self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+                      self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept')
+                      self.end_headers()
+
+                  def handle_proxy(self):
+                      # Bypass auth for /health and /v1/health
+                      if self.path not in ["/health", "/v1/health"]:
+                          auth = self.headers.get("Authorization")
+                          if auth != STATIC_TOKEN:
+                              self.send_response(401)
+                              self.send_header('Content-Type', 'application/json')
+                              self.send_header('Access-Control-Allow-Origin', '*')
+                              self.end_headers()
+                              self.wfile.write(b'{"error": "Unauthorized", "message": "Invalid or missing Bearer token. Use Authorization: Bearer <TOKEN>"}')
+                              return
+
+                      target_url = TARGET + self.path
+                      content_len = int(self.headers.get('Content-Length', 0))
+                      body = self.rfile.read(content_len) if content_len > 0 else None
+
+                      headers = {k: v for k, v in self.headers.items() if k.lower() not in ['host', 'content-length']}
+                      req = urllib.request.Request(target_url, data=body, headers=headers, method=self.command)
+
+                      try:
+                          with urllib.request.urlopen(req, timeout=300) as resp:
+                              self.send_response(resp.status)
+                              for k, v in resp.headers.items():
+                                  if k.lower() not in ['transfer-encoding', 'content-length']:
+                                      self.send_header(k, v)
+                              self.send_header('Access-Control-Allow-Origin', '*')
+                              resp_data = resp.read()
+                              self.send_header('Content-Length', str(len(resp_data)))
+                              self.end_headers()
+                              self.wfile.write(resp_data)
+                      except urllib.error.HTTPError as e:
+                          self.send_response(e.code)
+                          for k, v in e.headers.items():
+                              if k.lower() not in ['transfer-encoding', 'content-length']:
+                                  self.send_header(k, v)
+                          self.send_header('Access-Control-Allow-Origin', '*')
+                          resp_data = e.read()
+                          self.send_header('Content-Length', str(len(resp_data)))
+                          self.end_headers()
+                          self.wfile.write(resp_data)
+                      except Exception as e:
+                          self.send_response(502)
+                          self.send_header('Content-Type', 'application/json')
+                          self.send_header('Access-Control-Allow-Origin', '*')
+                          self.end_headers()
+                          self.wfile.write(f'{{"error": "Bad Gateway", "details": "{str(e)}"}}\n'.encode('utf-8'))
+
+                  do_GET = handle_proxy
+                  do_POST = handle_proxy
+
+              print(f"Starting Python Auth Proxy on port {PORT}...")
+              with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), ProxyHandler) as httpd:
+                  httpd.serve_forever()
+              EOF
+              python3 /tmp/proxy.py
+          ports:
+            - name: proxy
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: proxy
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: proxy
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: /health
+              port: proxy
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+
+        - name: open-jev
+          image: registry.access.redhat.com/ubi9/python-311:latest
+          env:
+            - name: JEV_DEVICE
+              value: "cuda:0"
+            - name: HF_HOME
+              value: "/models/huggingface"
+            - name: TRANSFORMERS_CACHE
+              value: "/models/huggingface"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: huggingface-token
+                  key: HF_TOKEN
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "Installing Open-Jev runtime and dependencies..."
+              pip install --no-cache-dir \
+                torch \
+                transformers \
+                peft \
+                accelerate \
+                huggingface_hub
+
+              if [ ! -d "/tmp/Open-Jev" ]; then
+                echo "Fetching Open-Jev codebase..."
+                pip install --no-cache-dir git+https://github.com/Zefan-Cai/Open-Jev.git
+              fi
+
+              echo "Starting Open-Jev inference server on 0.0.0.0:8791..."
+              python3 -m jev.server \
+                --checkpoint /models/open-jev-2b/package/checkpoint \
+                --device cuda:0 \
+                --max-length 4096 \
+                --batch-size 1 \
+                --no-prefix-cache \
+                --host 0.0.0.0 \
+                --port 8791
+          ports:
+            - name: internal
+              containerPort: 8791
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "2"
+              memory: "8Gi"
+              nvidia.com/mig-2g.48gb: "1"
+            limits:
+              cpu: "4"
+              memory: "16Gi"
+              nvidia.com/mig-2g.48gb: "1"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: internal
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: internal
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: /health
+              port: internal
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: jev-model-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-jev
+  namespace: jev-model
+  labels:
+    app: open-jev
+spec:
+  type: ClusterIP
+  selector:
+    app: open-jev
+  ports:
+    - name: http
+      port: 8791
+      targetPort: 8080
+      protocol: TCP
+    - name: proxy
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: open-jev-gateway
+  namespace: jev-model
+  labels:
+    app: open-jev
+    component: gateway
+  annotations:
+    openshift.io/display-name: "Open-Jev Team Gateway"
+    haproxy.router.openshift.io/timeout: "120s"
+    haproxy.router.openshift.io/cors-allow-origin: "*"
+    haproxy.router.openshift.io/cors-allow-methods: "GET,POST,OPTIONS"
+    haproxy.router.openshift.io/cors-allow-headers: "Content-Type,Authorization"
+spec:
+  to:
+    kind: Service
+    name: open-jev
+  port:
+    targetPort: proxy
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

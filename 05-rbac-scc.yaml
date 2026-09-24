@@ -17,7 +17,7 @@
 #     app: open-jev
 # type: Opaque
 # stringData:
-#   static-client-secret: "REPLACE_WITH_YOUR_STATIC_TOKEN"  # e.g., IsfPassw0rd
+#   static-client-secret: "REPLACE_WITH_YOUR_STATIC_TOKEN"
 #   cookie-secret: "REPLACE_WITH_RANDOM_32_CHAR_STRING"     # Generate with: openssl rand -base64 32
 # ---
 #

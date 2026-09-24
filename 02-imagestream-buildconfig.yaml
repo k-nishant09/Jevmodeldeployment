@@ -59,6 +59,10 @@ spec:
           value: "3.11"
       # No cache for reproducible builds in air-gapped environments
       noCache: false
+      # Base image - use DockerImage directly
+      from:
+        kind: DockerImage
+        name: "registry.access.redhat.com/ubi9/python-311:latest"
       # Pull base image from internal registry if air-gapped
       # pullSecret:
       #   name: "internal-registry-pull-secret"
@@ -69,9 +73,9 @@ spec:
     git:
       uri: "https://github.com/Zefan-Cai/Open-Jev.git"
       ref: "main"
-    # For air-gapped: use a local git mirror or binary build
-    # contextDir: "Open-Jev"
-    # dockerfilePath: "Dockerfile"
+    # Use our custom Dockerfile
+    contextDir: "/"
+    dockerfilePath: "Dockerfile"
   
   # Output to ImageStream
   output:
@@ -79,14 +83,8 @@ spec:
       kind: ImageStreamTag
       name: "open-jev:2b"
   
-  # Trigger builds on image change or config change
+  # Trigger builds on config change or GitHub webhook
   triggers:
-    - type: ImageChange
-      imageChange:
-        from:
-          kind: ImageStreamTag
-          name: "ubi9/python-311:latest"
-          namespace: openshift
     - type: ConfigChange
     - type: GitHub
       github:

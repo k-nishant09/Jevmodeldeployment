@@ -9,7 +9,7 @@ Once deployed, your team can access the Open-Jev API at:
 🔗 Internal Service:     http://open-jev.jev-model.svc.cluster.local:8080
 ```
 
-**REPLACE `<YOUR_CLUSTER_DOMAIN>` with your OpenShift cluster domain** (e.g., `f80l034.fusion.tadn.ibm.com`)
+**REPLACE `<YOUR_CLUSTER_DOMAIN>` with your OpenShift cluster domain** (e.g., `example.com`)
 
 ---
 
@@ -329,7 +329,7 @@ console.log(result.predictions.severity.predicted_label);
 ```bash
 # Set your token
 export TOKEN="your-static-token-here"
-export DOMAIN="your-cluster-domain"  # e.g., f80l034.fusion.tadn.ibm.com
+export DOMAIN="your-cluster-domain"  # e.g., apps.example.com
 
 # Health check
 curl -k https://open-jev-team.apps.${DOMAIN}/health
